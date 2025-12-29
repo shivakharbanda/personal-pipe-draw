@@ -19,6 +19,10 @@ export interface DesignError {
   description: string;
   recommendation: string;
   confidence: number;
+  // Explainability fields
+  affectedComponents?: string[];  // Equipment tags/line numbers from the drawing
+  location?: string;              // Human-readable location description
+  detectionReason?: string;       // Explanation of why this issue was detected
 }
 
 export interface AnalysisState {

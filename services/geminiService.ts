@@ -45,10 +45,20 @@ export const analyzeIsometric = async (base64Image: string): Promise<{ component
 
 export const detectDesignErrors = async (base64Image: string): Promise<{ errors: DesignError[] }> => {
   const model = 'gemini-3-pro-preview';
-  const prompt = `Act as a senior piping design engineer. 
-  Examine this isometric drawing for design errors, compliance issues, or safety hazards. 
+  const prompt = `Act as a senior piping design engineer.
+  Examine this isometric drawing for design errors, compliance issues, or safety hazards.
   Look for: disconnected segments, missing vents/drains, incorrect flow orientations, or missing supports.
-  Return a JSON list of errors with 'category' (Critical, Warning, Info), 'description', 'recommendation', and 'confidence' (0-1).`;
+
+  IMPORTANT: For each error you detect, provide:
+  - category: (Critical, Warning, Info)
+  - description: What the error is
+  - recommendation: How to fix it
+  - confidence: (0-1) certainty score
+  - affectedComponents: Array of specific equipment tags, line numbers, or component IDs visible in the drawing (e.g., ["P-101A", "V-100", "2-CW-101"])
+  - location: Human-readable location description (e.g., "Pump P-101A suction line", "Heat exchanger E-101 inlet", "Line 2-CW-101 near valve")
+  - detectionReason: Brief explanation of how/why you detected this issue (e.g., "ASME BPVC requires relief valve on pressurized vessels", "API 610 mandates suction isolation for centrifugal pumps")
+
+  Return JSON with an 'errors' array containing these fields.`;
 
   const response = await ai.models.generateContent({
     model,
@@ -71,7 +81,13 @@ export const detectDesignErrors = async (base64Image: string): Promise<{ errors:
                 category: { type: Type.STRING },
                 description: { type: Type.STRING },
                 recommendation: { type: Type.STRING },
-                confidence: { type: Type.NUMBER }
+                confidence: { type: Type.NUMBER },
+                affectedComponents: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                location: { type: Type.STRING },
+                detectionReason: { type: Type.STRING }
               },
               required: ["category", "description", "recommendation", "confidence"]
             }

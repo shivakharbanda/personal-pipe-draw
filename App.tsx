@@ -22,7 +22,9 @@ import {
   Columns2,
   FileImage,
   Minimize2,
-  Image
+  Image,
+  MapPin,
+  Info
 } from 'lucide-react';
 
 type View = 'analysis' | 'info';
@@ -52,6 +54,20 @@ const App: React.FC = () => {
 
   // PDF generation state
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+
+  // Per-step processing states
+  const [stepStates, setStepStates] = useState<{
+    recognition: 'idle' | 'loading' | 'completed';
+    errorDetection: 'idle' | 'loading' | 'completed';
+    generation: 'idle' | 'loading' | 'completed';
+  }>({
+    recognition: 'idle',
+    errorDetection: 'idle',
+    generation: 'idle'
+  });
+
+  // Cross-reference highlighting for error components
+  const [highlightedComponent, setHighlightedComponent] = useState<string | null>(null);
 
   // Listen for hash changes (browser back/forward buttons)
   useEffect(() => {
@@ -91,19 +107,30 @@ const App: React.FC = () => {
     const loadingToast = toast.loading('Starting analysis...');
     setState(prev => ({ ...prev, isProcessing: true, error: null }));
 
+    // Reset step states
+    setStepStates({
+      recognition: 'idle',
+      errorDetection: 'idle',
+      generation: 'idle'
+    });
+
     try {
       // Step 2: Recognition
+      setStepStates(prev => ({ ...prev, recognition: 'loading' }));
       toast.loading('Recognizing components...', { id: loadingToast });
       setCurrentStep(WorkflowStep.RECOGNITION);
       const recognition = await analyzeIsometric(state.originalImage);
       setState(prev => ({ ...prev, recognizedComponents: recognition.components }));
+      setStepStates(prev => ({ ...prev, recognition: 'completed' }));
       toast.success(`Found ${recognition.components.length} components`, { id: loadingToast });
 
       // Step 3: Error Detection
+      setStepStates(prev => ({ ...prev, errorDetection: 'loading' }));
       const errorToast = toast.loading('Detecting design errors...');
       setCurrentStep(WorkflowStep.IDENTIFY_ERRORS);
       const errors = await detectDesignErrors(state.originalImage);
       setState(prev => ({ ...prev, detectedErrors: errors.errors }));
+      setStepStates(prev => ({ ...prev, errorDetection: 'completed' }));
 
       if (errors.errors.length > 0) {
         const criticalCount = errors.errors.filter(e => e.category === 'Critical').length;
@@ -117,10 +144,12 @@ const App: React.FC = () => {
       }
 
       // Step 4: Generation
+      setStepStates(prev => ({ ...prev, generation: 'loading' }));
       const genToast = toast.loading('Generating corrected drawing...');
       setCurrentStep(WorkflowStep.GENERATE_UPDATED);
       const updated = await generateUpdatedDrawing(state.originalImage, errors.errors);
       setState(prev => ({ ...prev, updatedImage: updated, isProcessing: false }));
+      setStepStates(prev => ({ ...prev, generation: 'completed' }));
       toast.success('Analysis complete!', { id: genToast });
 
     } catch (err: any) {
@@ -150,6 +179,13 @@ const App: React.FC = () => {
     });
     setCurrentStep(WorkflowStep.UPLOAD);
     setViewMode('side-by-side');
+
+    // Reset step states
+    setStepStates({
+      recognition: 'idle',
+      errorDetection: 'idle',
+      generation: 'idle'
+    });
   };
 
   // Download current image (toolbar button)
@@ -286,7 +322,7 @@ const App: React.FC = () => {
           },
         }}
       />
-      <StepIndicator currentStep={currentStep} />
+      <StepIndicator currentStep={currentStep} stepStates={stepStates} />
 
       {state.error && (
         <div className="bg-red-50 border border-red-600 p-4 rounded-lg flex items-start gap-3 mb-6">
@@ -371,8 +407,16 @@ const App: React.FC = () => {
                       <div className="bg-white/95 backdrop-blur-md px-6 py-4 rounded-2xl border border-neutral-300 shadow-xl flex flex-col items-center gap-3">
                         <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
                         <div className="text-center">
-                          <p className="text-neutral-900 font-semibold">Processing Drawing</p>
-                          <p className="text-neutral-600 text-xs uppercase tracking-widest mt-1">Analyzing components...</p>
+                          <p className="text-neutral-900 font-semibold">
+                            {stepStates.recognition === 'loading' && 'Recognizing Components'}
+                            {stepStates.errorDetection === 'loading' && 'Detecting Design Errors'}
+                            {stepStates.generation === 'loading' && 'Generating Corrected Drawing'}
+                          </p>
+                          <p className="text-neutral-600 text-xs uppercase tracking-widest mt-1">
+                            {stepStates.recognition === 'loading' && 'Analyzing drawing symbols...'}
+                            {stepStates.errorDetection === 'loading' && 'Validating ASME/API standards...'}
+                            {stepStates.generation === 'loading' && 'Creating corrected image...'}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -470,17 +514,7 @@ const App: React.FC = () => {
               Analysis Results
             </h3>
 
-            {state.isProcessing ? (
-              <div className="space-y-6">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="space-y-3">
-                    <div className="h-4 bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-200 rounded w-1/2 animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
-                    <div className="h-3 bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-200 rounded w-full animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
-                    <div className="h-3 bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-200 rounded w-3/4 animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
-                  </div>
-                ))}
-              </div>
-            ) : !state.originalImage ? (
+            {!state.originalImage ? (
               <div className="text-center py-12 space-y-3 border-2 border-dashed border-neutral-300 rounded-xl">
                 <div className="p-3 bg-neutral-100 w-fit mx-auto rounded-full text-neutral-400">
                   <ChevronRight className="w-5 h-5" />
@@ -489,38 +523,90 @@ const App: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Recognized Components Section */}
+                {/* Recognized Components Section - Progressive Disclosure */}
                 <section>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-bold text-neutral-700 uppercase tracking-wider">Components Detected</h4>
-                    <span className="bg-neutral-100 text-neutral-700 text-[10px] font-mono px-2 py-0.5 rounded border border-neutral-300">{state.recognizedComponents.length} items</span>
-                  </div>
-                  <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
-                    {state.recognizedComponents.map((comp, idx) => (
-                      <div key={idx} className="bg-neutral-50 p-3 rounded-lg border border-neutral-200 hover:border-neutral-300 transition-colors group">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold text-neutral-900 group-hover:text-blue-600 transition-colors">{comp.name}</span>
-                          <span className="text-[10px] bg-neutral-200 text-neutral-700 px-1.5 py-0.5 rounded font-mono uppercase">{comp.type}</span>
-                        </div>
-                        <p className="text-xs text-neutral-600 mt-1 leading-relaxed">{comp.description}</p>
-                      </div>
-                    ))}
-                    {state.recognizedComponents.length === 0 && (
-                      <p className="text-xs text-neutral-500 italic">No components identified yet. Run analysis.</p>
+                    {stepStates.recognition === 'loading' && (
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                    )}
+                    {stepStates.recognition === 'completed' && (
+                      <span className="bg-neutral-100 text-neutral-700 text-[10px] font-mono px-2 py-0.5 rounded border border-neutral-300">{state.recognizedComponents.length} items</span>
                     )}
                   </div>
+
+                  {/* Show loading shimmer ONLY for this step */}
+                  {stepStates.recognition === 'loading' && (
+                    <div className="space-y-3">
+                      {[1, 2, 3].map(i => (
+                        <div key={i} className="space-y-2">
+                          <div className="h-4 bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-200 rounded w-1/2 animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+                          <div className="h-3 bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-200 rounded w-full animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Show results as soon as completed */}
+                  {stepStates.recognition === 'completed' && (
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar animate-in fade-in duration-500">
+                      {state.recognizedComponents.map((comp, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-lg border transition-all group ${
+                            highlightedComponent === comp.name
+                              ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50'
+                              : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className={`text-sm font-semibold transition-colors ${
+                              highlightedComponent === comp.name
+                                ? 'text-blue-600'
+                                : 'text-neutral-900 group-hover:text-blue-600'
+                            }`}>{comp.name}</span>
+                            <span className="text-[10px] bg-neutral-200 text-neutral-700 px-1.5 py-0.5 rounded font-mono uppercase">{comp.type}</span>
+                          </div>
+                          <p className="text-xs text-neutral-600 mt-1 leading-relaxed">{comp.description}</p>
+                        </div>
+                      ))}
+                      {state.recognizedComponents.length === 0 && (
+                        <p className="text-xs text-neutral-500 italic">No components identified.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {stepStates.recognition === 'idle' && (
+                    <p className="text-xs text-neutral-500 italic">Waiting to start analysis...</p>
+                  )}
                 </section>
 
-                {/* Error Findings Section */}
+                {/* Error Findings Section - Progressive Disclosure */}
                 <section>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-bold text-neutral-700 uppercase tracking-wider">Design Issues</h4>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${state.detectedErrors.length > 0 ? 'bg-red-50 text-red-700 border-red-600' : 'bg-teal-50 text-teal-700 border-teal-600'}`}>
-                      {state.detectedErrors.length > 0 ? 'Issues Found' : 'Compliant'}
-                    </span>
+                    {stepStates.errorDetection === 'loading' && (
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                    )}
+                    {stepStates.errorDetection === 'completed' && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${state.detectedErrors.length > 0 ? 'bg-red-50 text-red-700 border-red-600' : 'bg-teal-50 text-teal-700 border-teal-600'}`}>
+                        {state.detectedErrors.length > 0 ? 'Issues Found' : 'Compliant'}
+                      </span>
+                    )}
                   </div>
-                  <div className="space-y-3">
-                    {state.detectedErrors.map((error, idx) => (
+
+                  {/* Show loading shimmer ONLY for this step */}
+                  {stepStates.errorDetection === 'loading' && (
+                    <div className="space-y-3">
+                      <div className="h-16 bg-gradient-to-r from-amber-100 via-amber-50 to-amber-100 rounded animate-shimmer border-l-4 border-amber-600" style={{ backgroundSize: '200% 100%' }} />
+                      <div className="h-16 bg-gradient-to-r from-red-100 via-red-50 to-red-100 rounded animate-shimmer border-l-4 border-red-600" style={{ backgroundSize: '200% 100%' }} />
+                    </div>
+                  )}
+
+                  {/* Show errors immediately when ready */}
+                  {stepStates.errorDetection === 'completed' && (
+                    <div className="space-y-3 animate-in fade-in duration-500">
+                      {state.detectedErrors.map((error, idx) => (
                       <div key={idx} className={`p-4 rounded-lg border-l-4 ${
                         error.category === 'Critical' ? 'bg-red-50 border-red-700 ring-1 ring-red-600/10' :
                         error.category === 'Warning' ? 'bg-amber-50 border-amber-600 ring-1 ring-amber-600/10' :
@@ -540,6 +626,60 @@ const App: React.FC = () => {
                               error.category === 'Warning' ? 'text-amber-900' :
                               'text-sky-900'
                             }`}>{error.description}</h5>
+
+                            {/* Affected Components */}
+                            {error.affectedComponents && error.affectedComponents.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {error.affectedComponents.map((comp, compIdx) => (
+                                  <span
+                                    key={compIdx}
+                                    className={`text-[10px] font-mono px-2 py-0.5 rounded cursor-pointer transition-all ${
+                                      highlightedComponent === comp ? 'ring-2 ring-blue-500' : ''
+                                    } ${
+                                      error.category === 'Critical' ? 'bg-red-100 text-red-800 border border-red-300' :
+                                      error.category === 'Warning' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                                      'bg-sky-100 text-sky-800 border border-sky-300'
+                                    }`}
+                                    onMouseEnter={() => setHighlightedComponent(comp)}
+                                    onMouseLeave={() => setHighlightedComponent(null)}
+                                    title="Hover to find in components list"
+                                  >
+                                    {comp}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Location Context */}
+                            {error.location && (
+                              <div className="mt-2 flex items-start gap-1">
+                                <MapPin className="w-3 h-3 text-neutral-500 mt-0.5 flex-shrink-0" />
+                                <p className="text-[11px] text-neutral-600 font-medium">
+                                  {error.location}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Detection Reason (Expandable) */}
+                            {error.detectionReason && (
+                              <details className="mt-2">
+                                <summary className="text-[11px] text-neutral-600 cursor-pointer hover:text-neutral-900 font-medium flex items-center gap-1">
+                                  <Info className="w-3 h-3" />
+                                  Why was this detected?
+                                </summary>
+                                <p className="text-[10px] text-neutral-600 mt-1 pl-4 italic leading-relaxed">
+                                  {error.detectionReason}
+                                </p>
+                              </details>
+                            )}
+
+                            {/* Fallback for missing location data */}
+                            {!error.affectedComponents && !error.location && (
+                              <p className="text-[10px] text-neutral-500 mt-2 italic">
+                                ℹ️ Review drawing manually to locate this issue
+                              </p>
+                            )}
+
                             <p className="text-xs text-neutral-700 mt-2 font-medium">Recommendation:</p>
                             <p className="text-xs text-neutral-600 mt-1 italic">{error.recommendation}</p>
                             <div className="flex items-center gap-2 mt-3">
@@ -556,14 +696,19 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    {state.originalImage && state.recognizedComponents.length > 0 && state.detectedErrors.length === 0 && !state.isProcessing && (
-                      <div className="text-center py-8 bg-teal-50 border border-teal-600 rounded-lg">
-                        <div className="text-teal-600 mb-2 flex justify-center"><Activity className="w-8 h-8" /></div>
-                        <p className="text-xs text-teal-900 font-bold uppercase tracking-widest">Compliant Design</p>
-                        <p className="text-[10px] text-teal-700 mt-1">No major design violations detected.</p>
-                      </div>
-                    )}
-                  </div>
+                      {state.detectedErrors.length === 0 && (
+                        <div className="text-center py-8 bg-teal-50 border border-teal-600 rounded-lg">
+                          <div className="text-teal-600 mb-2 flex justify-center"><Activity className="w-8 h-8" /></div>
+                          <p className="text-xs text-teal-900 font-bold uppercase tracking-widest">Compliant Design</p>
+                          <p className="text-[10px] text-teal-700 mt-1">No major design violations detected.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {stepStates.errorDetection === 'idle' && (
+                    <p className="text-xs text-neutral-500 italic">Awaiting error detection...</p>
+                  )}
                 </section>
 
                 {state.updatedImage && (
