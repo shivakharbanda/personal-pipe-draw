@@ -6,6 +6,7 @@ import StepIndicator from './components/StepIndicator';
 import InfoPage from './components/InfoPage';
 import { WorkflowStep, AnalysisState, PipelineComponent, DesignError } from './types';
 import { analyzeIsometric, detectDesignErrors, generateUpdatedDrawing } from './services/geminiService';
+import { generateAnalysisReport } from './services/pdfGenerator';
 import {
   Plus,
   Trash2,
@@ -16,10 +17,16 @@ import {
   AlertCircle,
   Activity,
   Maximize2,
-  Loader2
+  Loader2,
+  X,
+  Columns2,
+  FileImage,
+  Minimize2,
+  Image
 } from 'lucide-react';
 
 type View = 'analysis' | 'info';
+type ImageViewMode = 'side-by-side' | 'original-only' | 'corrected-only';
 
 const App: React.FC = () => {
   // Initialize view from URL hash
@@ -36,6 +43,15 @@ const App: React.FC = () => {
     isProcessing: false,
     error: null
   });
+
+  // Image view mode state
+  const [viewMode, setViewMode] = useState<ImageViewMode>('side-by-side');
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // PDF generation state
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
   // Listen for hash changes (browser back/forward buttons)
   useEffect(() => {
@@ -133,6 +149,110 @@ const App: React.FC = () => {
       error: null
     });
     setCurrentStep(WorkflowStep.UPLOAD);
+    setViewMode('side-by-side');
+  };
+
+  // Download current image (toolbar button)
+  const downloadCurrentImage = () => {
+    const imageToDownload = state.updatedImage || state.originalImage;
+    if (!imageToDownload) {
+      toast.error('No image available to download');
+      return;
+    }
+
+    try {
+      const link = document.createElement('a');
+      link.href = imageToDownload;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const prefix = state.updatedImage ? 'corrected' : 'original';
+      link.download = `isoguard-${prefix}-${timestamp}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('Image downloaded successfully');
+    } catch (error) {
+      toast.error('Failed to download image');
+      console.error(error);
+    }
+  };
+
+  // Download corrected image (PNG Download button)
+  const downloadCorrectedImage = () => {
+    if (!state.updatedImage) {
+      toast.error('No corrected image available');
+      return;
+    }
+
+    try {
+      const link = document.createElement('a');
+      link.href = state.updatedImage;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.download = `isoguard-corrected-${timestamp}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('Corrected image downloaded');
+    } catch (error) {
+      toast.error('Download failed');
+      console.error(error);
+    }
+  };
+
+  // Cycle through view modes
+  const cycleViewMode = () => {
+    setViewMode(prev => {
+      if (prev === 'side-by-side') return 'original-only';
+      if (prev === 'original-only') return 'corrected-only';
+      return 'side-by-side';
+    });
+  };
+
+  // Toggle fullscreen mode
+  const toggleFullscreen = () => {
+    setIsFullscreen(prev => !prev);
+    if (!isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'auto';
+    }
+  };
+
+  // ESC key handler for fullscreen
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+        document.body.style.overflow = 'auto';
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isFullscreen]);
+
+  // Generate PDF Report
+  const generatePdfReport = async () => {
+    if (!state.updatedImage || !state.originalImage) {
+      toast.error('Complete analysis required to generate PDF report');
+      return;
+    }
+
+    setIsGeneratingPdf(true);
+    const loadingToast = toast.loading('Generating PDF report...');
+
+    try {
+      await generateAnalysisReport(
+        state.originalImage,
+        state.updatedImage,
+        state.recognizedComponents,
+        state.detectedErrors
+      );
+      toast.success('PDF report generated successfully', { id: loadingToast });
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      toast.error('Failed to generate PDF report', { id: loadingToast });
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   // Render Info Page
@@ -204,8 +324,22 @@ const App: React.FC = () => {
                 <span className="text-xs font-mono uppercase text-neutral-600">Drawing Viewer v2.1</span>
               </div>
               <div className="flex items-center gap-2">
-                <button className="p-1.5 hover:bg-neutral-200 rounded text-neutral-600 transition-colors"><Maximize2 className="w-4 h-4" /></button>
-                <button className="p-1.5 hover:bg-neutral-200 rounded text-neutral-600 transition-colors"><Download className="w-4 h-4" /></button>
+                <button
+                  onClick={toggleFullscreen}
+                  disabled={!state.originalImage}
+                  className="p-1.5 hover:bg-neutral-200 rounded text-neutral-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="Fullscreen viewer"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={downloadCurrentImage}
+                  disabled={!state.originalImage}
+                  className="p-1.5 hover:bg-neutral-200 rounded text-neutral-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="Download image"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
@@ -267,21 +401,62 @@ const App: React.FC = () => {
 
           {/* Comparison Slider / Grid */}
           {state.updatedImage && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-widest text-neutral-600 font-bold ml-1">Original Revision</p>
-                <div className="bg-white border border-neutral-300 rounded-xl overflow-hidden aspect-video relative group cursor-pointer hover:border-neutral-400 transition-all shadow-sm">
-                  <img src={state.originalImage!} alt="Original" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
-                  <div className="absolute inset-0 bg-gradient-to-t from-neutral-900/40 to-transparent pointer-events-none" />
-                </div>
+            <div className="space-y-4">
+              {/* View Mode Toggle */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-neutral-700 uppercase tracking-wider">Image Comparison</h3>
+                <button
+                  onClick={cycleViewMode}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 rounded-lg border border-neutral-300 transition-all text-xs font-medium text-neutral-700"
+                  aria-label="Toggle view mode"
+                >
+                  {viewMode === 'side-by-side' && <><Columns2 className="w-3.5 h-3.5" /> Side-by-Side</>}
+                  {viewMode === 'original-only' && <><FileImage className="w-3.5 h-3.5" /> Original Only</>}
+                  {viewMode === 'corrected-only' && <><FileImage className="w-3.5 h-3.5" /> Corrected Only</>}
+                </button>
               </div>
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-widest text-teal-700 font-bold ml-1">Corrected Version</p>
-                <div className="bg-white border border-teal-600/30 rounded-xl overflow-hidden aspect-video relative group cursor-pointer ring-2 ring-teal-600/20 shadow-sm">
-                  <img src={state.updatedImage} alt="Optimized" className="w-full h-full object-cover" />
-                  <div className="absolute top-2 right-2 bg-teal-600 text-[10px] font-bold px-2 py-0.5 rounded-full text-white uppercase tracking-wider">Verified</div>
+
+              {/* Side-by-side view */}
+              {viewMode === 'side-by-side' && (
+                <div className="grid grid-cols-2 gap-4 animate-in fade-in duration-300">
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-widest text-neutral-600 font-bold ml-1">Original Revision</p>
+                    <div className="bg-white border border-neutral-300 rounded-xl overflow-hidden aspect-video relative group cursor-pointer hover:border-neutral-400 transition-all shadow-sm">
+                      <img src={state.originalImage!} alt="Original" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-neutral-900/40 to-transparent pointer-events-none" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-widest text-teal-700 font-bold ml-1">Corrected Version</p>
+                    <div className="bg-white border border-teal-600/30 rounded-xl overflow-hidden aspect-video relative group cursor-pointer ring-2 ring-teal-600/20 shadow-sm">
+                      <img src={state.updatedImage} alt="Optimized" className="w-full h-full object-cover" />
+                      <div className="absolute top-2 right-2 bg-teal-600 text-[10px] font-bold px-2 py-0.5 rounded-full text-white uppercase tracking-wider">Verified</div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Original only view */}
+              {viewMode === 'original-only' && (
+                <div className="space-y-2 animate-in fade-in duration-300">
+                  <p className="text-xs uppercase tracking-widest text-neutral-600 font-bold ml-1">Original Revision</p>
+                  <div className="bg-white border border-neutral-300 rounded-xl overflow-hidden aspect-video relative group cursor-pointer hover:border-neutral-400 transition-all shadow-sm">
+                    <img src={state.originalImage!} alt="Original" className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-neutral-900/40 to-transparent pointer-events-none" />
+                  </div>
+                </div>
+              )}
+
+              {/* Corrected only view */}
+              {viewMode === 'corrected-only' && (
+                <div className="space-y-2 animate-in fade-in duration-300">
+                  <p className="text-xs uppercase tracking-widest text-teal-700 font-bold ml-1">Corrected Version</p>
+                  <div className="bg-white border border-teal-600/30 rounded-xl overflow-hidden aspect-video relative group cursor-pointer ring-2 ring-teal-600/20 shadow-sm">
+                    <img src={state.updatedImage} alt="Optimized" className="w-full h-full object-cover" />
+                    <div className="absolute top-2 right-2 bg-teal-600 text-[10px] font-bold px-2 py-0.5 rounded-full text-white uppercase tracking-wider">Verified</div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -407,18 +582,75 @@ const App: React.FC = () => {
           <div className="bg-white border border-neutral-300 rounded-2xl p-5 shadow-sm">
             <h4 className="text-xs font-bold text-neutral-600 uppercase tracking-widest mb-4">Export Tools</h4>
             <div className="grid grid-cols-2 gap-3">
-              <button disabled={!state.updatedImage} className="flex flex-col items-center gap-2 p-3 bg-neutral-50 border border-neutral-300 rounded-xl hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-neutral-700">
-                <Download className="w-5 h-5 text-blue-600" />
-                <span className="text-[10px] font-bold uppercase">DWG Export</span>
+              <button
+                onClick={downloadCorrectedImage}
+                disabled={!state.updatedImage}
+                className="flex flex-col items-center gap-2 p-3 bg-neutral-50 border border-neutral-300 rounded-xl hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-neutral-700"
+                aria-label="Download PNG"
+              >
+                <Image className="w-5 h-5 text-blue-600" />
+                <span className="text-[10px] font-bold uppercase">PNG Download</span>
               </button>
-              <button disabled={!state.updatedImage} className="flex flex-col items-center gap-2 p-3 bg-neutral-50 border border-neutral-300 rounded-xl hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-neutral-700">
-                <Maximize2 className="w-5 h-5 text-blue-600" />
-                <span className="text-[10px] font-bold uppercase">PDF Report</span>
+              <button
+                onClick={generatePdfReport}
+                disabled={!state.updatedImage || isGeneratingPdf}
+                className="flex flex-col items-center gap-2 p-3 bg-neutral-50 border border-neutral-300 rounded-xl hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-neutral-700"
+                aria-label="Generate PDF Report"
+              >
+                {isGeneratingPdf ? (
+                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                ) : (
+                  <FileImage className="w-5 h-5 text-blue-600" />
+                )}
+                <span className="text-[10px] font-bold uppercase">
+                  {isGeneratingPdf ? 'Generating...' : 'PDF Report'}
+                </span>
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Fullscreen Modal */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200">
+          {/* Fullscreen Toolbar */}
+          <div className="bg-neutral-100 p-4 flex items-center justify-between border-b border-neutral-300 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+              <span className="text-sm font-mono uppercase text-neutral-700">Fullscreen Viewer</span>
+              <span className="text-xs text-neutral-500">Press ESC to exit</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={downloadCurrentImage}
+                className="p-2 hover:bg-neutral-200 rounded-lg text-neutral-600 transition-colors flex items-center gap-2"
+                aria-label="Download image"
+              >
+                <Download className="w-4 h-4" />
+                <span className="text-xs font-medium">Download</span>
+              </button>
+              <button
+                onClick={toggleFullscreen}
+                className="p-2 hover:bg-neutral-200 rounded-lg text-neutral-600 transition-colors flex items-center gap-2"
+                aria-label="Exit fullscreen"
+              >
+                <X className="w-4 h-4" />
+                <span className="text-xs font-medium">Close</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Fullscreen Image Container */}
+          <div className="flex-1 flex items-center justify-center p-8 bg-neutral-50 overflow-auto">
+            <img
+              src={state.updatedImage || state.originalImage!}
+              alt="Fullscreen Drawing"
+              className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+            />
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes scan {
