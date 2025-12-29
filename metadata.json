@@ -1,0 +1,7 @@
+{
+  "name": "IsoGuard AI: Piping & Isometric Assistant",
+  "description": "An industrial-grade AI tool for analyzing pipeline isometric drawings, identifying design errors, and generating corrected schematics using Gemini AI Vision.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
