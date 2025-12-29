@@ -228,18 +228,18 @@ const InfoPage: React.FC<InfoPageProps> = ({ onNavigateBack }) => {
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">YOLOv8</div>
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Tesseract</div>
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Gemini</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Claude 4</div>
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Claude 4</div> */}
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">OpenCV</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">NetworkX</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Neo4j</div>
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">NetworkX</div> */}
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Neo4j</div> */}
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">FastAPI</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">PostgreSQL</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">ezdxf</div>
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">PostgreSQL</div> */}
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">ezdxf</div> */}
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">AutoCAD API</div>
               <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Docker</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Kubernetes</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">AWS</div>
-              <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Prometheus</div>
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Kubernetes</div> */}
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">AWS</div> */}
+              {/* <div className="bg-blue-50 border border-blue-600/20 px-3 py-2 rounded-lg text-center text-sm font-semibold text-blue-700">Prometheus</div> */}
             </div>
           </div>
         </section>
