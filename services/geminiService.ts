@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse, Chat } from "@google/genai";
 import { PipelineComponent, DesignError } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
@@ -130,5 +130,98 @@ export const generateUpdatedDrawing = async (base64Image: string, errors: Design
   }
 
   if (!imageUrl) throw new Error("Could not generate updated image part.");
+  return imageUrl;
+};
+
+export const initializeChatSession = (
+  components: PipelineComponent[],
+  errors: DesignError[]
+): Chat => {
+  const componentsSummary = components.map(c =>
+    `${c.name} (${c.type}): ${c.description}`
+  ).join('\n');
+
+  const errorsSummary = errors.map(e => {
+    let summary = `${e.category}: ${e.description}\n  Fix: ${e.recommendation}`;
+    if (e.affectedComponents?.length) {
+      summary += `\n  Components: ${e.affectedComponents.join(', ')}`;
+    }
+    if (e.location) {
+      summary += `\n  Location: ${e.location}`;
+    }
+    if (e.detectionReason) {
+      summary += `\n  Reasoning: ${e.detectionReason}`;
+    }
+    return summary;
+  }).join('\n\n');
+
+  return ai.chats.create({
+    model: 'gemini-3-flash-preview',
+    config: {
+      systemInstruction: `You are a Senior Piping Engineering Consultant for the IsoGuard AI platform.
+      The user has just completed an automated audit of an isometric drawing.
+
+      CONTEXT:
+      Detected Components:
+      ${componentsSummary}
+
+      Identified Design Issues:
+      ${errorsSummary}
+
+      Goal: Answer technical questions about the drawing, explain design standards (like ASME B31.3), and help the user understand the AI's recommendations. Be precise, professional, and helpful.`,
+    },
+  });
+};
+
+export const generateAnnotatedDrawing = async (
+  base64Image: string,
+  errors: DesignError[]
+): Promise<string> => {
+  const model = 'gemini-2.5-flash-image';
+
+  // Build annotation instructions with color coding
+  const annotations = errors.map((e, index) => {
+    const color = e.category === 'Critical' ? 'red' :
+                  e.category === 'Warning' ? 'orange' : 'blue';
+    const location = e.location || e.affectedComponents?.join(', ') || e.description;
+    return `${index + 1}. Add ${color} marker at: ${location}`;
+  }).join('\n');
+
+  const prompt = `You are annotating an industrial piping isometric drawing to highlight design issues.
+
+ORIGINAL DRAWING: Preserve the drawing exactly as-is. Do not modify or correct anything.
+
+ANNOTATIONS TO ADD:
+${annotations}
+
+VISUAL STYLE:
+- Use semi-transparent colored circles/highlights (red for critical, orange for warnings, blue for info)
+- Add clear numbered labels (1, 2, 3...) next to each marker
+- Use arrows pointing to the exact location if needed
+- Keep annotations clear but not overwhelming
+- Maintain technical drawing readability
+
+Return the annotated drawing with all markers clearly visible.`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image.split(',')[1], mimeType: 'image/png' } },
+        { text: prompt }
+      ]
+    }
+  });
+
+  // Extract image from response
+  let imageUrl = '';
+  for (const part of response.candidates[0].content.parts) {
+    if (part.inlineData) {
+      imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+      break;
+    }
+  }
+
+  if (!imageUrl) throw new Error("Could not generate annotated image");
   return imageUrl;
 };

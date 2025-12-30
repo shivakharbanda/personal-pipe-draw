@@ -30,7 +30,13 @@ export interface AnalysisState {
   recognizedComponents: PipelineComponent[];
   detectedErrors: DesignError[];
   updatedImage: string | null;
+  annotatedImage: string | null;
   isProcessing: boolean;
   error: string | null;
   errorDetails?: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
 }
