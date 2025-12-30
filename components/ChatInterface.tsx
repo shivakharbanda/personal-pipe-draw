@@ -28,19 +28,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
   };
 
   return (
-    <div className="flex flex-col h-[500px] bg-white border border-neutral-300 rounded-2xl overflow-hidden shadow-sm">
-      <div className="bg-neutral-100 p-3 border-b border-neutral-300 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Bot className="w-4 h-4 text-blue-600" />
-          <span className="text-xs font-bold uppercase tracking-widest text-neutral-700">AI Consultant</span>
+    <div className="flex flex-col h-[calc(100vh-200px)]">
+      {isStreaming && (
+        <div className="absolute top-2 right-2 flex items-center gap-2 text-[10px] text-blue-600 font-mono animate-pulse bg-white/90 px-2 py-1 rounded-lg shadow-sm">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          PROCESSING...
         </div>
-        {isStreaming && (
-          <div className="flex items-center gap-2 text-[10px] text-blue-600 font-mono animate-pulse">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            PROCESSING...
-          </div>
-        )}
-      </div>
+      )}
 
       <div
         ref={scrollRef}

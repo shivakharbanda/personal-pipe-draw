@@ -81,7 +81,6 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isStreamingChat, setIsStreamingChat] = useState(false);
   const chatInstanceRef = useRef<Chat | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<'analysis' | 'chat'>('analysis');
 
   // Listen for hash changes (browser back/forward buttons)
   useEffect(() => {
@@ -428,9 +427,9 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Main Workspace */}
-        <div className="lg:col-span-8 space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Image Viewer */}
+        <div className="lg:col-span-4 space-y-6">
           <div className="bg-white border border-neutral-300 rounded-2xl overflow-hidden min-h-[500px] flex flex-col relative group shadow-sm">
             <div className="bg-neutral-100 p-3 flex items-center justify-between border-b border-neutral-300">
               <div className="flex items-center gap-2">
@@ -617,7 +616,7 @@ const App: React.FC = () => {
                 <div className="space-y-3 animate-in fade-in duration-300">
                   {/* Color Legend */}
                   <div className="flex items-center gap-4 text-xs bg-neutral-50 p-2 rounded-lg border border-neutral-300">
-                    <span className="font-semibold text-neutral-700">Issue Markers:</span>
+                    <span className="font-semibold text-neutral-700">Numbered Markers:</span>
                     <span className="flex items-center gap-1">
                       <div className="w-3 h-3 rounded-full bg-red-600"></div>
                       <span className="text-neutral-700">Critical</span>
@@ -630,6 +629,7 @@ const App: React.FC = () => {
                       <div className="w-3 h-3 rounded-full bg-blue-600"></div>
                       <span className="text-neutral-700">Info</span>
                     </span>
+                    <span className="text-neutral-500">• Numbers match error cards</span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-4">
@@ -686,47 +686,18 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Sidebar Intelligence Panel */}
+        {/* Center: Analysis Panel */}
         <div className="lg:col-span-4 space-y-6">
-          {/* Tabbed Panel: Analysis | AI Consultant */}
           <div className="bg-white border border-neutral-300 rounded-2xl overflow-hidden shadow-sm">
-            {/* Tab Headers */}
-            <div className="flex border-b border-neutral-300">
-              <button
-                onClick={() => setSidebarTab('analysis')}
-                className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 transition-all ${
-                  sidebarTab === 'analysis'
-                    ? 'bg-neutral-100 text-blue-600 border-b-2 border-blue-600'
-                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50'
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                <span className="font-semibold text-sm">Analysis</span>
-              </button>
-              <button
-                onClick={() => setSidebarTab('chat')}
-                disabled={!state.updatedImage}
-                className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 transition-all ${
-                  sidebarTab === 'chat'
-                    ? 'bg-neutral-100 text-blue-600 border-b-2 border-blue-600'
-                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50'
-                } ${!state.updatedImage ? 'opacity-30 cursor-not-allowed' : ''}`}
-              >
-                <MessageSquare className="w-4 h-4" />
-                <span className="font-semibold text-sm">AI Consultant</span>
-              </button>
+            {/* Analysis Header */}
+            <div className="bg-neutral-100 p-3 border-b border-neutral-300 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-blue-600" />
+              <span className="text-xs font-bold uppercase tracking-widest text-neutral-700">Analysis Results</span>
             </div>
 
-            {/* Tab Content */}
+            {/* Analysis Content */}
             <div className="p-6">
-              {sidebarTab === 'analysis' ? (
-                <>
-                  <h3 className="text-lg font-bold flex items-center gap-2 mb-6 text-neutral-900">
-                    <Activity className="w-5 h-5 text-blue-600" />
-                    Analysis Results
-                  </h3>
-
-                  {!state.originalImage ? (
+              {!state.originalImage ? (
               <div className="text-center py-12 space-y-3 border-2 border-dashed border-neutral-300 rounded-xl">
                 <div className="p-3 bg-neutral-100 w-fit mx-auto rounded-full text-neutral-400">
                   <ChevronRight className="w-5 h-5" />
@@ -841,7 +812,7 @@ const App: React.FC = () => {
 
                   {/* Show errors immediately when ready */}
                   {stepStates.errorDetection === 'completed' && (
-                    <div className="space-y-3 animate-in fade-in duration-500">
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar animate-in fade-in duration-500">
                       {state.detectedErrors.map((error, idx) => (
                       <div key={idx} className={`p-4 rounded-lg border-l-4 ${
                         error.category === 'Critical' ? 'bg-red-50 border-red-700 ring-1 ring-red-600/10' :
@@ -849,12 +820,12 @@ const App: React.FC = () => {
                         'bg-sky-50 border-sky-600 ring-1 ring-sky-600/10'
                       }`}>
                         <div className="flex items-start gap-3">
-                          <div className={`mt-0.5 ${
-                            error.category === 'Critical' ? 'text-red-700' :
-                            error.category === 'Warning' ? 'text-amber-700' :
-                            'text-sky-700'
+                          <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                            error.category === 'Critical' ? 'bg-red-600 text-white' :
+                            error.category === 'Warning' ? 'bg-amber-600 text-white' :
+                            'bg-blue-600 text-white'
                           }`}>
-                            <AlertCircle className="w-4 h-4" />
+                            {idx + 1}
                           </div>
                           <div className="flex-1">
                             <h5 className={`text-sm font-bold ${
@@ -957,15 +928,6 @@ const App: React.FC = () => {
                 )}
                   </div>
                 )}
-                </>
-              ) : (
-                // Chat Interface Tab
-                <ChatInterface
-                  messages={chatMessages}
-                  onSendMessage={handleSendChatMessage}
-                  isStreaming={isStreamingChat}
-                />
-              )}
             </div>
           </div>
 
@@ -998,6 +960,24 @@ const App: React.FC = () => {
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Right: Chat Panel - Always Visible */}
+        <div className="lg:col-span-4">
+          <div className="bg-white border border-neutral-300 rounded-2xl overflow-hidden shadow-sm sticky top-6">
+            {/* Chat Header */}
+            <div className="bg-neutral-100 p-3 border-b border-neutral-300 flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-blue-600" />
+              <span className="text-xs font-bold uppercase tracking-widest text-neutral-700">AI Consultant</span>
+            </div>
+
+            {/* Chat Interface */}
+            <ChatInterface
+              messages={chatMessages}
+              onSendMessage={handleSendChatMessage}
+              isStreaming={isStreamingChat}
+            />
           </div>
         </div>
       </div>
