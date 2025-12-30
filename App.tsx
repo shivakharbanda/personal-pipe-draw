@@ -5,7 +5,8 @@ import Layout from './components/Layout';
 import StepIndicator from './components/StepIndicator';
 import InfoPage from './components/InfoPage';
 import ChatInterface from './components/ChatInterface';
-import { WorkflowStep, AnalysisState, PipelineComponent, DesignError, ChatMessage } from './types';
+import ErrorEditModal from './components/ErrorEditModal';
+import { WorkflowStep, AnalysisState, PipelineComponent, DesignError, ChatMessage, EditSession, ChangeAction } from './types';
 import { analyzeIsometric, detectDesignErrors, generateUpdatedDrawing, initializeChatSession, generateAnnotatedDrawing } from './services/geminiService';
 import { generateAnalysisReport } from './services/pdfGenerator';
 import { Chat, GenerateContentResponse } from '@google/genai';
@@ -27,7 +28,8 @@ import {
   Image,
   MapPin,
   Info,
-  MessageSquare
+  MessageSquare,
+  Edit2
 } from 'lucide-react';
 
 type View = 'analysis' | 'info';
@@ -81,6 +83,21 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isStreamingChat, setIsStreamingChat] = useState(false);
   const chatInstanceRef = useRef<Chat | null>(null);
+
+  // Edit session state
+  const [editSession, setEditSession] = useState<EditSession>({
+    originalErrors: [],
+    currentErrors: [],
+    originalComponents: [],
+    currentComponents: [],
+    changeLog: [],
+    hasUnsavedChanges: false
+  });
+
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [editingError, setEditingError] = useState<DesignError | null>(null);
+  const [showChangelog, setShowChangelog] = useState<boolean>(false);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
 
   // Listen for hash changes (browser back/forward buttons)
   useEffect(() => {
@@ -185,6 +202,22 @@ const App: React.FC = () => {
         errors.errors
       );
 
+      // Initialize edit session with detected errors and components
+      // IMPORTANT: Use spread operator to create NEW arrays, not references
+      console.log('[startAnalysis] Received errors from API:', errors.errors.map(e => ({ id: e.id, desc: e.description?.substring(0, 30) })));
+      console.log('[startAnalysis] All error IDs:', errors.errors.map(e => e.id));
+
+      setEditSession({
+        originalErrors: [...errors.errors],
+        currentErrors: [...errors.errors],
+        originalComponents: [...recognition.components],
+        currentComponents: [...recognition.components],
+        changeLog: [],
+        hasUnsavedChanges: false
+      });
+
+      console.log('[startAnalysis] EditSession initialized with', errors.errors.length, 'errors');
+
     } catch (err: any) {
       console.error(err);
       toast.dismiss(loadingToast);
@@ -224,7 +257,18 @@ const App: React.FC = () => {
     // Reset chat state
     setChatMessages([]);
     chatInstanceRef.current = null;
-    setSidebarTab('analysis');
+
+    // Reset edit session
+    setEditSession({
+      originalErrors: [],
+      currentErrors: [],
+      originalComponents: [],
+      currentComponents: [],
+      changeLog: [],
+      hasUnsavedChanges: false
+    });
+    setEditingError(null);
+    setShowChangelog(false);
   };
 
   const handleSendChatMessage = async (text: string) => {
@@ -262,6 +306,232 @@ const App: React.FC = () => {
     } finally {
       setIsStreamingChat(false);
     }
+  };
+
+  // Helper function to generate unique IDs
+  const generateId = () => `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // CRUD Handlers for Errors
+  const handleAddError = () => {
+    setEditingError(null);
+    setIsEditMode(true);
+  };
+
+  const handleEditError = (error: DesignError) => {
+    setEditingError(error);
+    setIsEditMode(true);
+  };
+
+  const handleSaveError = (error: DesignError) => {
+    const isNew = !editSession.currentErrors.find(e => e.id === error.id);
+
+    // Create change action
+    const changeAction: ChangeAction = {
+      id: generateId(),
+      timestamp: new Date(),
+      type: isNew ? 'add' : 'edit',
+      target: 'error',
+      targetId: error.id,
+      description: isNew ? `Added: ${error.description}` : `Modified: ${error.description}`,
+      beforeState: isNew ? null : editSession.currentErrors.find(e => e.id === error.id) || null,
+      afterState: error,
+      source: 'manual'
+    };
+
+    // Update current errors (ONLY editSession, not main state)
+    setEditSession(prev => ({
+      ...prev,
+      currentErrors: isNew
+        ? [...prev.currentErrors, { ...error, isNew: true, createdBy: 'user', lastModified: new Date() }]
+        : prev.currentErrors.map(e =>
+            e.id === error.id
+              ? { ...error, isModified: true, lastModified: new Date() }
+              : e
+          ),
+      changeLog: [...prev.changeLog, changeAction],
+      hasUnsavedChanges: true
+    }));
+
+    setIsEditMode(false);
+    setEditingError(null);
+    toast.success(isNew ? 'Issue added successfully' : 'Issue updated successfully');
+  };
+
+  const handleDeleteError = (errorId: string) => {
+    console.log('[handleDeleteError] Called with errorId:', errorId);
+    console.log('[handleDeleteError] editSession.currentErrors.length:', editSession.currentErrors.length);
+    console.log('[handleDeleteError] editSession.currentErrors:', editSession.currentErrors.map(e => ({ id: e.id, description: e.description })));
+
+    const error = editSession.currentErrors.find(e => e.id === errorId);
+
+    if (!error) {
+      console.error('[handleDeleteError] Error not found in currentErrors!');
+      console.error('[handleDeleteError] Requested ID:', errorId);
+      console.error('[handleDeleteError] Available IDs:', editSession.currentErrors.map(e => e.id));
+      toast.error('Error not found. The error list may have been refreshed. Please try again.');
+      return;
+    }
+
+    console.log('[handleDeleteError] Found error to delete:', error.description);
+
+    // Confirmation dialog
+    if (!window.confirm(`Delete issue: "${error.description}"?`)) return;
+
+    const changeAction: ChangeAction = {
+      id: generateId(),
+      timestamp: new Date(),
+      type: 'delete',
+      target: 'error',
+      targetId: errorId,
+      description: `Deleted: ${error.description}`,
+      beforeState: error,
+      afterState: null,
+      source: 'manual'
+    };
+
+    // Update ONLY editSession (not main state)
+    setEditSession(prev => ({
+      ...prev,
+      currentErrors: prev.currentErrors.filter(e => e.id !== errorId),
+      changeLog: [...prev.changeLog, changeAction],
+      hasUnsavedChanges: true
+    }));
+
+    toast.success('Issue deleted successfully');
+  };
+
+  const handleRestoreError = (changeActionId: string) => {
+    const change = editSession.changeLog.find(c => c.id === changeActionId);
+    if (!change || change.type !== 'delete' || !change.beforeState) return;
+
+    const restoredError = change.beforeState as DesignError;
+
+    const restoreAction: ChangeAction = {
+      id: generateId(),
+      timestamp: new Date(),
+      type: 'restore',
+      target: 'error',
+      targetId: restoredError.id,
+      description: `Restored: ${restoredError.description}`,
+      beforeState: null,
+      afterState: restoredError,
+      source: 'manual'
+    };
+
+    // Update ONLY editSession (not main state)
+    setEditSession(prev => ({
+      ...prev,
+      currentErrors: [...prev.currentErrors, restoredError],
+      changeLog: [...prev.changeLog, restoreAction],
+      hasUnsavedChanges: true
+    }));
+
+    toast.success('Issue restored successfully');
+  };
+
+  // Regenerate drawing with modified errors
+  const handleRegenerateDrawing = async () => {
+    if (!state.originalImage) return;
+
+    setIsRegenerating(true);
+
+    try {
+      // Use CURRENT (modified) errors for regeneration
+      const modifiedErrors = editSession.currentErrors;
+
+      console.log('=== REGENERATION REQUEST STARTED ===');
+      console.log('Total modified errors:', modifiedErrors.length);
+      console.log('Modified errors array:', JSON.stringify(modifiedErrors, null, 2));
+      console.log('Edit session state:', {
+        originalErrorsCount: editSession.originalErrors.length,
+        currentErrorsCount: editSession.currentErrors.length,
+        changeLogCount: editSession.changeLog.length,
+        hasUnsavedChanges: editSession.hasUnsavedChanges
+      });
+      console.log('State.detectedErrors count:', state.detectedErrors.length);
+
+      // Validation: Check if we have errors to regenerate with
+      if (modifiedErrors.length === 0) {
+        console.error('[handleRegenerateDrawing] No errors to regenerate with!');
+        toast.error('No errors to regenerate with. Add errors or use original drawing.');
+        setIsRegenerating(false);
+        return;
+      }
+
+      // Validation: Check if error objects have required fields
+      const validErrors = modifiedErrors.filter(e => e.description && e.recommendation);
+      if (validErrors.length !== modifiedErrors.length) {
+        console.warn('[handleRegenerateDrawing] Some errors missing required fields');
+        console.warn('Valid errors:', validErrors.length, 'Total errors:', modifiedErrors.length);
+        console.warn('Invalid errors:', modifiedErrors.filter(e => !e.description || !e.recommendation));
+      }
+
+      // Step 1: Generate annotated drawing
+      const annotatedToast = toast.loading(`Generating annotated drawing with ${modifiedErrors.length} error${modifiedErrors.length !== 1 ? 's' : ''}...`);
+      console.log('Step 1: Calling generateAnnotatedDrawing with', modifiedErrors.length, 'errors');
+      const annotatedImage = await generateAnnotatedDrawing(
+        state.originalImage,
+        modifiedErrors
+      );
+      console.log('Step 1: Annotated drawing generated successfully');
+      toast.success('Annotated drawing ready!', { id: annotatedToast });
+
+      // Step 2: Generate corrected drawing
+      const updatedToast = toast.loading(`Generating corrected drawing with ${modifiedErrors.length} fix${modifiedErrors.length !== 1 ? 'es' : ''}...`);
+      console.log('Step 2: Calling generateUpdatedDrawing with', modifiedErrors.length, 'errors');
+      console.log('Step 2: Errors being sent:', modifiedErrors.map(e => ({
+        id: e.id,
+        description: e.description,
+        recommendation: e.recommendation,
+        category: e.category
+      })));
+      const updatedImage = await generateUpdatedDrawing(
+        state.originalImage,
+        modifiedErrors
+      );
+      console.log('Step 2: Corrected drawing generated successfully');
+      toast.success('Corrected drawing ready!', { id: updatedToast });
+
+      // Step 3: Update state ONLY if both succeeded
+      setState(prev => ({
+        ...prev,
+        annotatedImage,
+        updatedImage,
+        detectedErrors: modifiedErrors  // Update main error list
+      }));
+
+      // Mark changes as saved
+      setEditSession(prev => ({
+        ...prev,
+        originalErrors: modifiedErrors,  // New baseline
+        currentErrors: modifiedErrors,
+        hasUnsavedChanges: false,
+        changeLog: []  // Clear changelog after successful regeneration
+      }));
+
+      toast.success('Drawing regenerated successfully!');
+
+    } catch (error) {
+      console.error('Regeneration failed:', error);
+      toast.error(`Failed to regenerate drawing: ${(error as Error).message}`);
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  // Discard all changes and revert to original errors
+  const handleDiscardChanges = () => {
+    if (!window.confirm('Discard all changes and revert to original AI analysis?')) return;
+
+    setEditSession(prev => ({
+      ...prev,
+      currentErrors: prev.originalErrors,
+      currentComponents: prev.originalComponents,
+      changeLog: [],
+      hasUnsavedChanges: false
+    }));
+
+    toast.success('Changes discarded');
   };
 
   // Download current image (toolbar button)
@@ -418,12 +688,26 @@ const App: React.FC = () => {
               </details>
             )}
           </div>
-          <button
-            onClick={reset}
-            className="text-red-700 hover:text-red-900 text-sm font-medium"
-          >
-            Dismiss
-          </button>
+          <div className="flex gap-2">
+            {/* Show retry button for temporary errors */}
+            {(state.error.includes('overloaded') ||
+              state.error.includes('unavailable') ||
+              state.error.includes('try again')) && (
+              <button
+                onClick={startAnalysis}
+                className="text-blue-700 hover:text-blue-900 text-sm font-medium flex items-center gap-1"
+              >
+                <RefreshCcw className="w-4 h-4" />
+                Retry
+              </button>
+            )}
+            <button
+              onClick={reset}
+              className="text-red-700 hover:text-red-900 text-sm font-medium"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -768,14 +1052,26 @@ const App: React.FC = () => {
                 <section>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-sm font-bold text-neutral-700 uppercase tracking-wider">Design Issues</h4>
-                    {stepStates.errorDetection === 'loading' && (
-                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-                    )}
-                    {stepStates.errorDetection === 'completed' && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${state.detectedErrors.length > 0 ? 'bg-red-50 text-red-700 border-red-600' : 'bg-teal-50 text-teal-700 border-teal-600'}`}>
-                        {state.detectedErrors.length > 0 ? 'Issues Found' : 'Compliant'}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {stepStates.errorDetection === 'loading' && (
+                        <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                      )}
+                      {stepStates.errorDetection === 'completed' && (
+                        <>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${state.detectedErrors.length > 0 ? 'bg-red-50 text-red-700 border-red-600' : 'bg-teal-50 text-teal-700 border-teal-600'}`}>
+                            {state.detectedErrors.length > 0 ? 'Issues Found' : 'Compliant'}
+                          </span>
+                          <button
+                            onClick={handleAddError}
+                            className="flex items-center gap-1 px-2 py-1 bg-blue-600 text-white text-[10px] font-semibold rounded hover:bg-blue-700 transition-colors"
+                            aria-label="Add new issue"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Add Issue
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* Show loading state with informative cards */}
@@ -813,12 +1109,42 @@ const App: React.FC = () => {
                   {/* Show errors immediately when ready */}
                   {stepStates.errorDetection === 'completed' && (
                     <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar animate-in fade-in duration-500">
-                      {state.detectedErrors.map((error, idx) => (
-                      <div key={idx} className={`p-4 rounded-lg border-l-4 ${
+                      {editSession.currentErrors.map((error, idx) => (
+                      <div key={idx} className={`relative group p-4 rounded-lg border-l-4 ${
                         error.category === 'Critical' ? 'bg-red-50 border-red-700 ring-1 ring-red-600/10' :
                         error.category === 'Warning' ? 'bg-amber-50 border-amber-600 ring-1 ring-amber-600/10' :
                         'bg-sky-50 border-sky-600 ring-1 ring-sky-600/10'
                       }`}>
+                        {/* Edit/Delete buttons - appear on hover */}
+                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => handleEditError(error)}
+                            className="p-1.5 bg-white border border-neutral-300 rounded-lg hover:bg-neutral-50 transition-colors shadow-sm"
+                            aria-label="Edit error"
+                          >
+                            <Edit2 className="w-3.5 h-3.5 text-neutral-600" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteError(error.id)}
+                            className="p-1.5 bg-white border border-red-300 rounded-lg hover:bg-red-50 transition-colors shadow-sm"
+                            aria-label="Delete error"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                          </button>
+                        </div>
+
+                        {/* Status indicators */}
+                        {error.isModified && (
+                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold uppercase rounded border border-blue-300">
+                            Modified
+                          </div>
+                        )}
+                        {error.isNew && (
+                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-green-100 text-green-700 text-[9px] font-bold uppercase rounded border border-green-300">
+                            New
+                          </div>
+                        )}
+
                         <div className="flex items-start gap-3">
                           <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
                             error.category === 'Critical' ? 'bg-red-600 text-white' :
@@ -903,7 +1229,7 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                      {state.detectedErrors.length === 0 && (
+                      {editSession.currentErrors.length === 0 && (
                         <div className="text-center py-8 bg-teal-50 border border-teal-600 rounded-lg">
                           <div className="text-teal-600 mb-2 flex justify-center"><Activity className="w-8 h-8" /></div>
                           <p className="text-xs text-teal-900 font-bold uppercase tracking-widest">Compliant Design</p>
@@ -917,6 +1243,50 @@ const App: React.FC = () => {
                     <p className="text-xs text-neutral-500 italic">Awaiting error detection...</p>
                   )}
                 </section>
+
+                {/* Regenerate Section - appears when there are unsaved changes */}
+                {editSession.hasUnsavedChanges && stepStates.errorDetection === 'completed' && (
+                  <section className="mt-6">
+                    <div className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-600 rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <h5 className="text-sm font-bold text-neutral-900 mb-1">
+                            Ready to Regenerate
+                          </h5>
+                          <p className="text-xs text-neutral-700 mb-3">
+                            You have {editSession.changeLog.length} pending change{editSession.changeLog.length !== 1 ? 's' : ''}. Regenerate the corrected drawing with your modifications?
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleRegenerateDrawing}
+                              disabled={isRegenerating}
+                              className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              {isRegenerating ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Regenerating...
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCcw className="w-4 h-4" />
+                                  Regenerate Drawing
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={handleDiscardChanges}
+                              className="px-4 py-2 border border-neutral-300 text-neutral-700 text-sm font-semibold rounded-lg hover:bg-neutral-50 transition-colors"
+                            >
+                              Discard Changes
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                )}
 
                 {state.updatedImage && (
                   <button
@@ -1024,6 +1394,17 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Error Edit Modal */}
+      <ErrorEditModal
+        error={editingError}
+        isOpen={isEditMode}
+        onClose={() => {
+          setIsEditMode(false);
+          setEditingError(null);
+        }}
+        onSave={handleSaveError}
+      />
 
       <style>{`
         @keyframes scan {

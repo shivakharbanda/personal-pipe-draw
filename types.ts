@@ -7,6 +7,7 @@ export enum WorkflowStep {
 }
 
 export interface PipelineComponent {
+  id: string;
   type: string;
   name: string;
   description: string;
@@ -23,6 +24,12 @@ export interface DesignError {
   affectedComponents?: string[];  // Equipment tags/line numbers from the drawing
   location?: string;              // Human-readable location description
   detectionReason?: string;       // Explanation of why this issue was detected
+  // Change tracking metadata
+  isModified?: boolean;
+  isNew?: boolean;
+  isDeleted?: boolean;
+  createdBy?: 'ai' | 'user';
+  lastModified?: Date;
 }
 
 export interface AnalysisState {
@@ -39,4 +46,25 @@ export interface AnalysisState {
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+}
+
+export interface ChangeAction {
+  id: string;
+  timestamp: Date;
+  type: 'add' | 'edit' | 'delete' | 'restore';
+  target: 'error' | 'component';
+  targetId: string;
+  description: string;
+  beforeState?: DesignError | PipelineComponent | null;
+  afterState?: DesignError | PipelineComponent | null;
+  source: 'manual' | 'chat-ai' | 'chat-user';
+}
+
+export interface EditSession {
+  originalErrors: DesignError[];
+  currentErrors: DesignError[];
+  originalComponents: PipelineComponent[];
+  currentComponents: PipelineComponent[];
+  changeLog: ChangeAction[];
+  hasUnsavedChanges: boolean;
 }
