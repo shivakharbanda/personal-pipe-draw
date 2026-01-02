@@ -51,7 +51,7 @@ const Layout: React.FC<LayoutProps> = ({ children, onNavigateToInfo }) => {
             <HardHat className="w-4 h-4" />
             <span>Industrial Safety Compliant Tool</span>
           </div>
-          <p>© 2024 IsoGuard AI Systems. Developed for Engineering Precision.</p>
+          <p>© 2026  Developed by ScikIQ.</p>
           <div className="flex items-center gap-4">
             <a href="#" className="hover:text-neutral-200">Terms</a>
             <a href="#" className="hover:text-neutral-200">Privacy</a>

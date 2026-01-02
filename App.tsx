@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import Layout from './components/Layout';
 import StepIndicator from './components/StepIndicator';
@@ -152,6 +153,14 @@ const App: React.FC = () => {
       const recognition = await analyzeIsometric(state.originalImage);
       setState(prev => ({ ...prev, recognizedComponents: recognition.components }));
       setStepStates(prev => ({ ...prev, recognition: 'completed' }));
+
+      // IMMEDIATELY update editSession with components
+      setEditSession(prev => ({
+        ...prev,
+        originalComponents: [...(recognition?.components || [])],
+        currentComponents: [...(recognition?.components || [])]
+      }));
+
       toast.success(`Found ${recognition.components.length} components`, { id: loadingToast });
 
       // Step 3: Error Detection
@@ -159,8 +168,21 @@ const App: React.FC = () => {
       const errorToast = toast.loading('Detecting design errors...');
       setCurrentStep(WorkflowStep.IDENTIFY_ERRORS);
       const errors = await detectDesignErrors(state.originalImage);
-      setState(prev => ({ ...prev, detectedErrors: errors.errors }));
-      setStepStates(prev => ({ ...prev, errorDetection: 'completed' }));
+
+      // Force immediate re-render to show errors BEFORE image generation
+      flushSync(() => {
+        setState(prev => ({ ...prev, detectedErrors: errors.errors }));
+        setStepStates(prev => ({ ...prev, errorDetection: 'completed' }));
+
+        // IMMEDIATELY update editSession so errors show in UI right away
+        setEditSession(prev => ({
+          ...prev,
+          originalErrors: [...(errors?.errors || [])],
+          currentErrors: [...(errors?.errors || [])],
+          hasUnsavedChanges: false,
+          changeLog: []
+        }));
+      });
 
       if (errors.errors.length > 0) {
         const criticalCount = errors.errors.filter(e => e.category === 'Critical').length;
@@ -202,21 +224,11 @@ const App: React.FC = () => {
         errors.errors
       );
 
-      // Initialize edit session with detected errors and components
-      // IMPORTANT: Use spread operator to create NEW arrays, not references
-      console.log('[startAnalysis] Received errors from API:', errors.errors.map(e => ({ id: e.id, desc: e.description?.substring(0, 30) })));
-      console.log('[startAnalysis] All error IDs:', errors.errors.map(e => e.id));
-
-      setEditSession({
-        originalErrors: [...errors.errors],
-        currentErrors: [...errors.errors],
-        originalComponents: [...recognition.components],
-        currentComponents: [...recognition.components],
-        changeLog: [],
-        hasUnsavedChanges: false
-      });
-
-      console.log('[startAnalysis] EditSession initialized with', errors.errors.length, 'errors');
+      // editSession already updated incrementally during analysis
+      // Just log for debugging
+      console.log('[startAnalysis] Analysis complete');
+      console.log('[startAnalysis] Final error count:', errors?.errors?.length || 0);
+      console.log('[startAnalysis] Final component count:', recognition?.components?.length || 0);
 
     } catch (err: any) {
       console.error(err);
