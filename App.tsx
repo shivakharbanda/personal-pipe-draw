@@ -1359,6 +1359,7 @@ const App: React.FC = () => {
               messages={chatMessages}
               onSendMessage={handleSendChatMessage}
               isStreaming={isStreamingChat}
+              isChatReady={chatInstanceRef.current !== null}
             />
           </div>
         </div>

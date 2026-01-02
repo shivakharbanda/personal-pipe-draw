@@ -8,9 +8,10 @@ interface ChatInterfaceProps {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
   isStreaming: boolean;
+  isChatReady: boolean;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isStreaming }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isStreaming, isChatReady }) => {
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -106,13 +107,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your inquiry..."
-          disabled={isStreaming}
+          placeholder={isChatReady ? "Type your inquiry..." : "Complete analysis to enable chat..."}
+          disabled={isStreaming || !isChatReady}
           className="flex-1 bg-white border border-neutral-300 rounded-lg px-4 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors disabled:opacity-50 disabled:bg-neutral-50"
         />
         <button
           type="submit"
-          disabled={!input.trim() || isStreaming}
+          disabled={!input.trim() || isStreaming || !isChatReady}
           className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Send className="w-4 h-4" />
