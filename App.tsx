@@ -7,8 +7,8 @@ import StepIndicator from './components/StepIndicator';
 import InfoPage from './components/InfoPage';
 import ChatInterface from './components/ChatInterface';
 import ErrorEditModal from './components/ErrorEditModal';
-import { WorkflowStep, AnalysisState, PipelineComponent, DesignError, ChatMessage, EditSession, ChangeAction } from './types';
-import { analyzeIsometric, detectDesignErrors, generateUpdatedDrawing, initializeChatSession, generateAnnotatedDrawing } from './services/geminiService';
+import { WorkflowStep, AnalysisState, PipelineComponent, DesignError, ChatMessage, EditSession, ChangeAction, PendingErrorAction } from './types';
+import { analyzeIsometric, detectDesignErrors, generateUpdatedDrawing, initializeChatSession, generateAnnotatedDrawing, sendImageContext } from './services/geminiService';
 import { generateAnalysisReport } from './services/pdfGenerator';
 import { Chat, GenerateContentResponse } from '@google/genai';
 import {
@@ -84,6 +84,7 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isStreamingChat, setIsStreamingChat] = useState(false);
   const chatInstanceRef = useRef<Chat | null>(null);
+  const [pendingChatActions, setPendingChatActions] = useState<PendingErrorAction[]>([]);
 
   // Edit session state
   const [editSession, setEditSession] = useState<EditSession>({
@@ -146,6 +147,10 @@ const App: React.FC = () => {
     });
 
     try {
+      // Variables to store generated images for chat context
+      let annotated: string | null = null;
+      let updated: string;
+
       // Step 2: Recognition
       setStepStates(prev => ({ ...prev, recognition: 'loading' }));
       toast.loading('Recognizing components...', { id: loadingToast });
@@ -199,7 +204,7 @@ const App: React.FC = () => {
       if (errors.errors.length > 0) {
         const annotatedToast = toast.loading('Generating annotated view...');
         try {
-          const annotated = await generateAnnotatedDrawing(state.originalImage, errors.errors);
+          annotated = await generateAnnotatedDrawing(state.originalImage, errors.errors);
           setState(prev => ({ ...prev, annotatedImage: annotated }));
           toast.success('Annotated drawing ready!', { id: annotatedToast });
         } catch (err) {
@@ -213,16 +218,31 @@ const App: React.FC = () => {
       setStepStates(prev => ({ ...prev, generation: 'loading' }));
       const genToast = toast.loading('Generating corrected drawing...');
       setCurrentStep(WorkflowStep.GENERATE_UPDATED);
-      const updated = await generateUpdatedDrawing(state.originalImage, errors.errors);
+      updated = await generateUpdatedDrawing(state.originalImage, errors.errors);
       setState(prev => ({ ...prev, updatedImage: updated, isProcessing: false }));
       setStepStates(prev => ({ ...prev, generation: 'completed' }));
       toast.success('Analysis complete!', { id: genToast });
 
       // Initialize chat session with analysis context
-      chatInstanceRef.current = initializeChatSession(
+      const chat = initializeChatSession(
         recognition.components,
         errors.errors
       );
+      chatInstanceRef.current = chat;
+
+      // Send image context to chat for visual reference
+      try {
+        await sendImageContext(
+          chat,
+          state.originalImage!,
+          annotated || null,
+          updated
+        );
+        console.log('[startAnalysis] Image context sent to chat');
+      } catch (err) {
+        console.warn('[startAnalysis] Failed to send image context:', err);
+        // Non-blocking - chat will work without visual context
+      }
 
       // editSession already updated incrementally during analysis
       // Just log for debugging
@@ -269,6 +289,7 @@ const App: React.FC = () => {
     // Reset chat state
     setChatMessages([]);
     chatInstanceRef.current = null;
+    setPendingChatActions([]);
 
     // Reset edit session
     setEditSession({
@@ -291,23 +312,22 @@ const App: React.FC = () => {
     setIsStreamingChat(true);
 
     try {
-      const stream = await chatInstanceRef.current.sendMessageStream({ message: text });
-      let fullText = '';
+      const result = await chatInstanceRef.current.sendMessage({ message: text });
 
-      // Add initial model message for streaming
-      setChatMessages(prev => [...prev, { role: 'model', text: '' }]);
-
-      for await (const chunk of stream) {
-        const c = chunk as GenerateContentResponse;
-        const chunkText = c.text || '';
-        fullText += chunkText;
-
-        setChatMessages(prev => {
-          const newMsgs = [...prev];
-          newMsgs[newMsgs.length - 1].text = fullText;
-          return newMsgs;
-        });
+      // Handle function calls if present
+      if (result.functionCalls && result.functionCalls.length > 0) {
+        handleFunctionCall(result.functionCalls[0], text);
       }
+
+      // Handle text response if present (can coexist with function calls)
+      if (result.text) {
+        setChatMessages(prev => [...prev, {
+          role: 'model',
+          text: result.text
+        }]);
+      }
+
+      setIsStreamingChat(false);
     } catch (err) {
       console.error("Chat error:", err);
       setChatMessages(prev => [...prev, {
@@ -315,13 +335,291 @@ const App: React.FC = () => {
         text: 'Sorry, I encountered an error. Please try again.'
       }]);
       toast.error('Chat error occurred');
-    } finally {
       setIsStreamingChat(false);
     }
   };
 
   // Helper function to generate unique IDs
   const generateId = () => `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // Chat Function Call Handlers
+  const handleFunctionCall = (functionCall: any, userPrompt: string) => {
+    const { name, args } = functionCall;
+    const actionId = generateId();
+
+    console.log('[Chat] Function call:', name, args);
+
+    switch (name) {
+      case 'add_error_node': {
+        const newError: DesignError = {
+          id: generateId(),
+          category: args.category || 'Warning',
+          description: args.description,
+          recommendation: args.recommendation,
+          confidence: args.confidence || 0.9,
+          affectedComponents: args.affectedComponents || [],
+          location: args.location || '',
+          detectionReason: args.detectionReason || 'User-reported via chat',
+          isNew: true,
+          createdBy: 'user'
+        };
+
+        const pendingAction: PendingErrorAction = {
+          id: actionId,
+          type: 'add',
+          errors: [newError],
+          userPrompt,
+          timestamp: new Date()
+        };
+
+        showConfirmation(pendingAction);
+        break;
+      }
+
+      case 'edit_error_node': {
+        const existingError = editSession.currentErrors.find(e => e.id === args.errorId);
+        if (!existingError) {
+          setChatMessages(prev => [...prev, {
+            role: 'model',
+            text: `I couldn't find that error. Current issues:\n${editSession.currentErrors.map((e, i) => `${i + 1}. ${e.description}`).join('\n')}`
+          }]);
+          return;
+        }
+
+        const updatedError: DesignError = {
+          ...existingError,
+          ...args.updates,
+          isModified: true,
+          lastModified: new Date()
+        };
+
+        const pendingAction: PendingErrorAction = {
+          id: actionId,
+          type: 'edit',
+          errors: [updatedError],
+          userPrompt,
+          timestamp: new Date()
+        };
+
+        showConfirmation(pendingAction, existingError);
+        break;
+      }
+
+      case 'delete_error_node': {
+        const errorToDelete = editSession.currentErrors.find(e => e.id === args.errorId);
+        if (!errorToDelete) {
+          setChatMessages(prev => [...prev, {
+            role: 'model',
+            text: 'I couldn\'t find that error to delete.'
+          }]);
+          return;
+        }
+
+        const pendingAction: PendingErrorAction = {
+          id: actionId,
+          type: 'delete',
+          errors: [errorToDelete],
+          userPrompt,
+          timestamp: new Date()
+        };
+
+        showConfirmation(pendingAction);
+        break;
+      }
+
+      case 'bulk_add_errors': {
+        const newErrors: DesignError[] = args.errors.map((errorData: any) => ({
+          id: generateId(),
+          category: errorData.category || 'Warning',
+          description: errorData.description,
+          recommendation: errorData.recommendation,
+          confidence: errorData.confidence || 0.9,
+          affectedComponents: errorData.affectedComponents || [],
+          location: errorData.location || '',
+          detectionReason: errorData.detectionReason || 'User-reported via chat',
+          isNew: true,
+          createdBy: 'user'
+        }));
+
+        const pendingAction: PendingErrorAction = {
+          id: actionId,
+          type: 'bulk-add',
+          errors: newErrors,
+          userPrompt,
+          timestamp: new Date()
+        };
+
+        showConfirmation(pendingAction);
+        break;
+      }
+
+      default:
+        console.warn('Unknown function call:', name);
+        setChatMessages(prev => [...prev, {
+          role: 'model',
+          text: 'I tried to process that request but encountered an issue. Could you rephrase?'
+        }]);
+    }
+  };
+
+  const showConfirmation = (action: PendingErrorAction, existingError?: DesignError) => {
+    const confirmationMessage: ChatMessage = {
+      role: 'system',
+      text: formatConfirmationMessage(action, existingError),
+      pendingAction: action,
+      actionId: action.id
+    };
+
+    setChatMessages(prev => [...prev, confirmationMessage]);
+    setPendingChatActions(prev => [...prev, action]);
+  };
+
+  const formatConfirmationMessage = (
+    action: PendingErrorAction,
+    existingError?: DesignError
+  ): string => {
+    switch (action.type) {
+      case 'add': {
+        const error = action.errors[0];
+        return `I'd like to add this issue:\n\n**${error.category}**: ${error.description}\n\n**Fix**: ${error.recommendation}\n\n**Location**: ${error.location || 'Not specified'}\n\n**Components**: ${error.affectedComponents?.join(', ') || 'None'}\n\nDoes this look correct?`;
+      }
+
+      case 'edit': {
+        const updated = action.errors[0];
+        return `I'd like to update this issue:\n\n**Before**: ${existingError?.description}\n\n**After**: ${updated.description}\n\n**New fix**: ${updated.recommendation}\n\nConfirm these changes?`;
+      }
+
+      case 'delete': {
+        const toDelete = action.errors[0];
+        return `I'd like to remove this issue:\n\n**${toDelete.category}**: ${toDelete.description}\n\nConfirm deletion?`;
+      }
+
+      case 'bulk-add': {
+        return `I'd like to add ${action.errors.length} issues:\n\n${action.errors.map((e, i) => `${i + 1}. **${e.category}**: ${e.description}`).join('\n')}\n\nConfirm all?`;
+      }
+
+      default:
+        return 'Confirm this action?';
+    }
+  };
+
+  const handleConfirmChatAction = (actionId: string) => {
+    const action = pendingChatActions.find(a => a.id === actionId);
+    if (!action) {
+      toast.error('Action not found');
+      return;
+    }
+
+    // Apply changes to edit session
+    switch (action.type) {
+      case 'add':
+      case 'bulk-add': {
+        const changeActions: ChangeAction[] = action.errors.map(error => ({
+          id: generateId(),
+          timestamp: new Date(),
+          type: 'add',
+          target: 'error',
+          targetId: error.id,
+          description: `Added via chat: ${error.description}`,
+          beforeState: null,
+          afterState: error,
+          source: 'chat-ai'
+        }));
+
+        setEditSession(prev => ({
+          ...prev,
+          currentErrors: [...prev.currentErrors, ...action.errors],
+          changeLog: [...prev.changeLog, ...changeActions],
+          hasUnsavedChanges: true
+        }));
+
+        toast.success(`Added ${action.errors.length} issue${action.errors.length > 1 ? 's' : ''}`);
+        break;
+      }
+
+      case 'edit': {
+        const updatedError = action.errors[0];
+        const changeAction: ChangeAction = {
+          id: generateId(),
+          timestamp: new Date(),
+          type: 'edit',
+          target: 'error',
+          targetId: updatedError.id,
+          description: `Modified via chat: ${updatedError.description}`,
+          beforeState: editSession.currentErrors.find(e => e.id === updatedError.id) || null,
+          afterState: updatedError,
+          source: 'chat-ai'
+        };
+
+        setEditSession(prev => ({
+          ...prev,
+          currentErrors: prev.currentErrors.map(e =>
+            e.id === updatedError.id ? updatedError : e
+          ),
+          changeLog: [...prev.changeLog, changeAction],
+          hasUnsavedChanges: true
+        }));
+
+        toast.success('Issue updated');
+        break;
+      }
+
+      case 'delete': {
+        const errorToDelete = action.errors[0];
+        const changeAction: ChangeAction = {
+          id: generateId(),
+          timestamp: new Date(),
+          type: 'delete',
+          target: 'error',
+          targetId: errorToDelete.id,
+          description: `Deleted via chat: ${errorToDelete.description}`,
+          beforeState: errorToDelete,
+          afterState: null,
+          source: 'chat-ai'
+        };
+
+        setEditSession(prev => ({
+          ...prev,
+          currentErrors: prev.currentErrors.filter(e => e.id !== errorToDelete.id),
+          changeLog: [...prev.changeLog, changeAction],
+          hasUnsavedChanges: true
+        }));
+
+        toast.success('Issue deleted');
+        break;
+      }
+    }
+
+    // Mark as confirmed in chat
+    setChatMessages(prev =>
+      prev.map(msg =>
+        msg.actionId === actionId ? { ...msg, confirmed: true } : msg
+      )
+    );
+
+    // Remove from pending
+    setPendingChatActions(prev => prev.filter(a => a.id !== actionId));
+  };
+
+  const handleDenyChatAction = (actionId: string) => {
+    // Mark as cancelled
+    setChatMessages(prev =>
+      prev.map(msg =>
+        msg.actionId === actionId ? { ...msg, confirmed: false } : msg
+      )
+    );
+
+    // Remove from pending
+    setPendingChatActions(prev => prev.filter(a => a.id !== actionId));
+
+    // Add follow-up from AI
+    setChatMessages(prev => [...prev, {
+      role: 'model',
+      text: 'No problem! Let me know if you\'d like to make any adjustments.'
+    }]);
+
+    toast.info('Action cancelled');
+  };
 
   // CRUD Handlers for Errors
   const handleAddError = () => {
@@ -520,6 +818,25 @@ const App: React.FC = () => {
         hasUnsavedChanges: false,
         changeLog: []  // Clear changelog after successful regeneration
       }));
+
+      // Clear pending chat actions after successful regeneration
+      setPendingChatActions([]);
+
+      // Update chat with new images
+      if (chatInstanceRef.current) {
+        try {
+          await sendImageContext(
+            chatInstanceRef.current,
+            state.originalImage!,
+            annotatedImage,
+            updatedImage
+          );
+          console.log('[handleRegenerateDrawing] Chat image context refreshed');
+        } catch (err) {
+          console.warn('[handleRegenerateDrawing] Failed to update chat image context:', err);
+          // Non-blocking - chat will continue to work with old context
+        }
+      }
 
       toast.success('Drawing regenerated successfully!');
 
@@ -1360,6 +1677,8 @@ const App: React.FC = () => {
               onSendMessage={handleSendChatMessage}
               isStreaming={isStreamingChat}
               isChatReady={chatInstanceRef.current !== null}
+              onConfirmAction={handleConfirmChatAction}
+              onDenyAction={handleDenyChatAction}
             />
           </div>
         </div>

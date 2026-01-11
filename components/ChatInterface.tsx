@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot, Loader2 } from 'lucide-react';
+import { Send, User, Bot, Loader2, AlertCircle, Check, X, MapPin } from 'lucide-react';
 import { ChatMessage } from '../types';
 import ReactMarkdown from 'react-markdown';
 
@@ -9,9 +9,11 @@ interface ChatInterfaceProps {
   onSendMessage: (text: string) => void;
   isStreaming: boolean;
   isChatReady: boolean;
+  onConfirmAction?: (actionId: string) => void;
+  onDenyAction?: (actionId: string) => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isStreaming, isChatReady }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isStreaming, isChatReady, onConfirmAction, onDenyAction }) => {
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -52,54 +54,125 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            <div className={`p-2 rounded-lg h-fit ${msg.role === 'user' ? 'bg-blue-100 text-blue-600' : 'bg-neutral-200 text-neutral-600'}`}>
-              {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+        {messages.map((msg, i) => {
+          // Special rendering for confirmation messages (system role)
+          if (msg.role === 'system' && msg.pendingAction) {
+            return (
+              <div key={i} className="flex gap-3">
+                <div className="p-2 rounded-lg h-fit bg-purple-100 text-purple-600">
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+                <div className="max-w-[85%] bg-purple-50 border-2 border-purple-300 rounded-2xl rounded-tl-none p-4 space-y-3">
+                  {/* Confirmation message text */}
+                  <div className="text-sm text-neutral-900">
+                    <ReactMarkdown>
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
+
+                  {/* Preview of error details */}
+                  <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-2 text-xs">
+                    {msg.pendingAction.errors.map((error, idx) => (
+                      <div key={idx} className={`p-2 rounded border-l-4 ${
+                        error.category === 'Critical' ? 'bg-red-50 border-red-600' :
+                        error.category === 'Warning' ? 'bg-amber-50 border-amber-600' :
+                        'bg-blue-50 border-blue-600'
+                      }`}>
+                        <div className="font-semibold text-neutral-900">{error.description}</div>
+                        <div className="text-neutral-600 mt-1">{error.recommendation}</div>
+                        {error.location && (
+                          <div className="text-neutral-500 text-[10px] mt-1 flex items-center gap-1">
+                            <MapPin className="w-3 h-3" /> {error.location}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Confirmation buttons - only show if not yet confirmed/denied */}
+                  {msg.confirmed === undefined && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => onConfirmAction?.(msg.actionId!)}
+                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold text-sm flex items-center justify-center gap-1"
+                      >
+                        <Check className="w-4 h-4" /> Confirm
+                      </button>
+                      <button
+                        onClick={() => onDenyAction?.(msg.actionId!)}
+                        className="flex-1 px-4 py-2 bg-neutral-300 text-neutral-700 rounded-lg hover:bg-neutral-400 transition-colors font-semibold text-sm flex items-center justify-center gap-1"
+                      >
+                        <X className="w-4 h-4" /> Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Status indicator after user action */}
+                  {msg.confirmed === true && (
+                    <div className="text-green-700 text-xs font-semibold flex items-center gap-1">
+                      <Check className="w-4 h-4" /> Confirmed and applied
+                    </div>
+                  )}
+                  {msg.confirmed === false && (
+                    <div className="text-neutral-500 text-xs font-semibold flex items-center gap-1">
+                      <X className="w-4 h-4" /> Cancelled
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          // Normal user/model messages
+          return (
+            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              <div className={`p-2 rounded-lg h-fit ${msg.role === 'user' ? 'bg-blue-100 text-blue-600' : 'bg-neutral-200 text-neutral-600'}`}>
+                {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+              </div>
+              <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
+                msg.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-tr-none shadow-md'
+                  : 'bg-neutral-100 border border-neutral-300 text-neutral-900 rounded-tl-none'
+              }`}>
+                {msg.role === 'user' ? (
+                  msg.text
+                ) : (
+                  <ReactMarkdown
+                    components={{
+                      h1: ({node, ...props}) => <h1 className="text-lg font-bold text-neutral-900 mb-2 mt-3 first:mt-0" {...props} />,
+                      h2: ({node, ...props}) => <h2 className="text-base font-bold text-neutral-900 mb-2 mt-3 first:mt-0" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-sm font-bold text-neutral-900 mb-1 mt-2 first:mt-0" {...props} />,
+                      p: ({node, ...props}) => <p className="text-neutral-900 my-2 first:mt-0 last:mb-0" {...props} />,
+                      strong: ({node, ...props}) => <strong className="font-bold text-neutral-900" {...props} />,
+                      em: ({node, ...props}) => <em className="italic text-neutral-900" {...props} />,
+                      code: ({node, className, children, ...props}) => {
+                        const isInline = !className;
+                        return isInline ? (
+                          <code className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>
+                            {children}
+                          </code>
+                        ) : (
+                          <code className="block bg-neutral-800 text-neutral-100 p-3 rounded-lg my-2 overflow-x-auto text-xs font-mono" {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      pre: ({node, ...props}) => <pre className="my-2 first:mt-0 last:mb-0" {...props} />,
+                      ul: ({node, ...props}) => <ul className="list-disc pl-5 my-2 space-y-1 first:mt-0 last:mb-0" {...props} />,
+                      ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-2 space-y-1 first:mt-0 last:mb-0" {...props} />,
+                      li: ({node, ...props}) => <li className="text-neutral-900" {...props} />,
+                      a: ({node, ...props}) => <a className="text-blue-600 underline hover:text-blue-700" target="_blank" rel="noopener noreferrer" {...props} />,
+                      blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-neutral-300 pl-4 italic text-neutral-700 my-2" {...props} />,
+                      hr: ({node, ...props}) => <hr className="border-t border-neutral-300 my-3" {...props} />
+                    }}
+                  >
+                    {msg.text}
+                  </ReactMarkdown>
+                )}
+              </div>
             </div>
-            <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
-              msg.role === 'user'
-                ? 'bg-blue-600 text-white rounded-tr-none shadow-md'
-                : 'bg-neutral-100 border border-neutral-300 text-neutral-900 rounded-tl-none'
-            }`}>
-              {msg.role === 'user' ? (
-                msg.text
-              ) : (
-                <ReactMarkdown
-                  components={{
-                    h1: ({node, ...props}) => <h1 className="text-lg font-bold text-neutral-900 mb-2 mt-3 first:mt-0" {...props} />,
-                    h2: ({node, ...props}) => <h2 className="text-base font-bold text-neutral-900 mb-2 mt-3 first:mt-0" {...props} />,
-                    h3: ({node, ...props}) => <h3 className="text-sm font-bold text-neutral-900 mb-1 mt-2 first:mt-0" {...props} />,
-                    p: ({node, ...props}) => <p className="text-neutral-900 my-2 first:mt-0 last:mb-0" {...props} />,
-                    strong: ({node, ...props}) => <strong className="font-bold text-neutral-900" {...props} />,
-                    em: ({node, ...props}) => <em className="italic text-neutral-900" {...props} />,
-                    code: ({node, className, children, ...props}) => {
-                      const isInline = !className;
-                      return isInline ? (
-                        <code className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>
-                          {children}
-                        </code>
-                      ) : (
-                        <code className="block bg-neutral-800 text-neutral-100 p-3 rounded-lg my-2 overflow-x-auto text-xs font-mono" {...props}>
-                          {children}
-                        </code>
-                      );
-                    },
-                    pre: ({node, ...props}) => <pre className="my-2 first:mt-0 last:mb-0" {...props} />,
-                    ul: ({node, ...props}) => <ul className="list-disc pl-5 my-2 space-y-1 first:mt-0 last:mb-0" {...props} />,
-                    ol: ({node, ...props}) => <ol className="list-decimal pl-5 my-2 space-y-1 first:mt-0 last:mb-0" {...props} />,
-                    li: ({node, ...props}) => <li className="text-neutral-900" {...props} />,
-                    a: ({node, ...props}) => <a className="text-blue-600 underline hover:text-blue-700" target="_blank" rel="noopener noreferrer" {...props} />,
-                    blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-neutral-300 pl-4 italic text-neutral-700 my-2" {...props} />,
-                    hr: ({node, ...props}) => <hr className="border-t border-neutral-300 my-3" {...props} />
-                  }}
-                >
-                  {msg.text}
-                </ReactMarkdown>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <form onSubmit={handleSubmit} className="p-3 bg-white border-t border-neutral-300 flex gap-2">

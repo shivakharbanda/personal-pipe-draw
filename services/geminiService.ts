@@ -349,8 +349,8 @@ export const initializeChatSession = (
     `${c.name} (${c.type}): ${c.description}`
   ).join('\n');
 
-  const errorsSummary = errors.map(e => {
-    let summary = `${e.category}: ${e.description}\n  Fix: ${e.recommendation}`;
+  const errorsSummary = errors.map((e, idx) => {
+    let summary = `[#${idx + 1}] [ID: ${e.id}] ${e.category}: ${e.description}\n  Fix: ${e.recommendation}`;
     if (e.affectedComponents?.length) {
       summary += `\n  Components: ${e.affectedComponents.join(', ')}`;
     }
@@ -366,18 +366,216 @@ export const initializeChatSession = (
   return ai.chats.create({
     model: 'gemini-3-flash-preview',
     config: {
-      systemInstruction: `You are a Senior Piping Engineering Consultant for the IsoGuard AI platform.
-      The user has just completed an automated audit of an isometric drawing.
+      systemInstruction: `You are a Senior Piping Engineering Consultant for IsoGuard AI.
 
-      CONTEXT:
-      Detected Components:
-      ${componentsSummary}
+CURRENT DRAWING CONTEXT:
+Components: ${components.length} detected
+${componentsSummary}
 
-      Identified Design Issues:
-      ${errorsSummary}
+Current Issues (${errors.length}):
+${errorsSummary}
 
-      Goal: Answer technical questions about the drawing, explain design standards (like ASME B31.3), and help the user understand the AI's recommendations. Be precise, professional, and helpful.`,
+YOUR CAPABILITIES:
+1. Answer technical questions about piping design, ASME/API standards, and recommendations
+2. Add, edit, or delete error nodes through natural conversation
+3. Ask clarifying questions when user intent is ambiguous
+4. Reference the isometric drawings visually to understand spatial layout, component locations, and verify references
+
+FUNCTION CALLING RULES - BE PROACTIVE:
+- When user says to INSTALL/ADD/PUT IN something: use add_error_node function
+- When user says something is MISSING/NEEDED: use add_error_node function
+- When user wants to EDIT/CHANGE an error: use edit_error_node function (reference by number or ID)
+- When user wants to DELETE/REMOVE an error: use delete_error_node function
+- When user provides MULTIPLE items at once: use bulk_add_errors function
+- If you have enough info to create the error, CALL THE FUNCTION (don't ask permission)
+- Only ask clarifying questions if critical info is genuinely missing (location, what the issue is)
+
+EXAMPLES OF WHEN TO CALL add_error_node:
+User: "Install Pressure Safety Valves on the Reactor and Distillation Column"
+You: [Call add_error_node with: category=Critical, location="Reactor and Distillation Column", description="Missing Pressure Safety Valves", recommendation="Install PSVs sized per API 521 for worst-case overpressure scenario"]
+
+User: "Need isolation valve at pump P-101"
+You: [Call add_error_node with: category=Warning, location="Pump P-101", description="Missing isolation valve", recommendation="Install isolation valve per ASME B31.3"]
+
+User: "Add a critical error at pump P-101"
+You: [Ask] "What specific issue did you observe at pump P-101?"
+
+User: "The accumulator needs a relief device"
+You: [Call add_error_node with: category=Critical, location="Reflux Accumulator", description="Missing pressure relief device", recommendation="Install PSV or rupture disk per ASME Section VIII"]
+
+User: "Put in a check valve on line 100"
+You: [Call add_error_node with: category=Info, location="Line 100", description="Suggested check valve installation", recommendation="Install check valve to prevent backflow"]
+
+User: "Delete error 3"
+You: [Call delete_error_node with the ID from error #3 in the list]
+
+User: "Change error 2 to a warning instead of critical"
+You: [Call edit_error_node with ID from error #2, updates: {category: "Warning"}]
+
+WHEN NOT TO CALL FUNCTION:
+- User asks a question: "What PSVs are recommended?" → answer with text
+- User asks about existing errors: "Tell me about error 3" → answer with text
+- Missing critical info: "Add an error at the reactor" → ask "What specific issue?"
+
+Be conversational, helpful, and precise. Always provide engineering justification.`,
+
+      tools: [{
+        functionDeclarations: [
+          {
+            name: 'add_error_node',
+            description: 'Propose adding a new design error/issue to the drawing',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                category: {
+                  type: Type.STRING,
+                  enum: ['Critical', 'Warning', 'Info'],
+                  description: 'Severity level'
+                },
+                description: {
+                  type: Type.STRING,
+                  description: 'Clear description of the issue'
+                },
+                recommendation: {
+                  type: Type.STRING,
+                  description: 'How to fix this issue'
+                },
+                location: {
+                  type: Type.STRING,
+                  description: 'Location in the drawing (e.g., "Pump P-101A suction line")'
+                },
+                affectedComponents: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Component tags (e.g., ["P-101A", "V-100"])'
+                },
+                detectionReason: {
+                  type: Type.STRING,
+                  description: 'Why this is an issue (reference standards)'
+                },
+                confidence: {
+                  type: Type.NUMBER,
+                  description: 'Confidence 0-1 (default 0.9 for user issues)'
+                }
+              },
+              required: ['category', 'description', 'recommendation']
+            }
+          },
+          {
+            name: 'edit_error_node',
+            description: 'Propose editing an existing error',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                errorId: {
+                  type: Type.STRING,
+                  description: 'ID of error to edit (from context)'
+                },
+                updates: {
+                  type: Type.OBJECT,
+                  properties: {
+                    category: { type: Type.STRING, enum: ['Critical', 'Warning', 'Info'] },
+                    description: { type: Type.STRING },
+                    recommendation: { type: Type.STRING },
+                    location: { type: Type.STRING },
+                    affectedComponents: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    detectionReason: { type: Type.STRING },
+                    confidence: { type: Type.NUMBER }
+                  }
+                }
+              },
+              required: ['errorId', 'updates']
+            }
+          },
+          {
+            name: 'delete_error_node',
+            description: 'Propose deleting an error',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                errorId: {
+                  type: Type.STRING,
+                  description: 'ID of error to delete'
+                }
+              },
+              required: ['errorId']
+            }
+          },
+          {
+            name: 'bulk_add_errors',
+            description: 'Propose adding multiple errors at once',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                errors: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      category: { type: Type.STRING, enum: ['Critical', 'Warning', 'Info'] },
+                      description: { type: Type.STRING },
+                      recommendation: { type: Type.STRING },
+                      location: { type: Type.STRING },
+                      affectedComponents: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      detectionReason: { type: Type.STRING },
+                      confidence: { type: Type.NUMBER }
+                    },
+                    required: ['category', 'description', 'recommendation']
+                  }
+                }
+              },
+              required: ['errors']
+            }
+          }
+        ]
+      }]
     },
+  });
+};
+
+export const sendImageContext = async (
+  chat: Chat,
+  originalImage: string,
+  annotatedImage: string | null,
+  updatedImage: string | null
+): Promise<void> => {
+  const imageParts = [];
+
+  // Always include original
+  imageParts.push({
+    inlineData: {
+      data: originalImage.split(',')[1],
+      mimeType: 'image/png'
+    }
+  });
+
+  // Include annotated if available
+  if (annotatedImage) {
+    imageParts.push({
+      inlineData: {
+        data: annotatedImage.split(',')[1],
+        mimeType: 'image/png'
+      }
+    });
+  }
+
+  // Include corrected if available
+  if (updatedImage) {
+    imageParts.push({
+      inlineData: {
+        data: updatedImage.split(',')[1],
+        mimeType: 'image/png'
+      }
+    });
+  }
+
+  await chat.sendMessage({
+    message: [
+      {
+        text: `Context: I'm providing you with the isometric drawing(s) for visual reference:\n1. Original uploaded drawing\n${annotatedImage ? '2. Annotated drawing showing detected issues with numbered markers\n' : ''}${updatedImage ? '3. Corrected drawing with recommended fixes applied\n' : ''}\nYou can reference these images when discussing component locations, suggesting where to add new error markers, or answering questions about the drawing.`
+      },
+      ...imageParts
+    ]
   });
 };
 

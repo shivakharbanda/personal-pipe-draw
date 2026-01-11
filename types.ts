@@ -44,8 +44,20 @@ export interface AnalysisState {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   text: string;
+  // New fields for interactive confirmations
+  pendingAction?: PendingErrorAction;
+  confirmed?: boolean;  // undefined = pending, true = confirmed, false = cancelled
+  actionId?: string;    // Unique ID to track this message
+}
+
+export interface PendingErrorAction {
+  id: string;
+  type: 'add' | 'edit' | 'delete' | 'bulk-add';
+  errors: DesignError[];
+  userPrompt: string;
+  timestamp: Date;
 }
 
 export interface ChangeAction {
