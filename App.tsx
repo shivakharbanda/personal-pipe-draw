@@ -223,6 +223,11 @@ const App: React.FC = () => {
       setStepStates(prev => ({ ...prev, generation: 'completed' }));
       toast.success('Analysis complete!', { id: genToast });
 
+      // Clear any existing chat session before creating new one
+      if (chatInstanceRef.current) {
+        chatInstanceRef.current = null;
+      }
+
       // Initialize chat session with analysis context
       const chat = initializeChatSession(
         recognition.components,
